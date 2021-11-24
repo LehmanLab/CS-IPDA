@@ -1,0 +1,783 @@
+###PURPOSE: Analyze CSIPDA and RPP30 experiment data for normalized total and intact HIV DNA data 
+
+# 1) packages for script: 
+#install.packages("arrangements")
+#install.packages("here")
+#install.packages("tidyverse")
+#install.packages("plater")
+
+library(arrangements)
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+
+library(here) #if here function mis-IDs where your files are being kept...
+# want directory to start at Project>Reservoir ddPCR> OPH
+here() #check that wd is set...
+
+# read in helper functions 
+source(here("OPH_reservoir/OPH pipeline data/triplex_ref_helper_functions_20210204.R")) #read in analysis functions from other R document ***its important this file lives under the start of the here set above***
+
+
+
+#### 2) EXPERIMENT DETAILS ####    
+
+# DATE OF ANALYSIS: September 23, 2021 
+# WHAT IS BEING ANALYZED: OPH decay samples run as of Sept 17,2021; months 43-45 and 96-99 (sample set is NOT complete--> pull lists 5,6, and 12)
+
+EXPERIMENT_NAME <- "OPH_M45_99"
+
+## QUANTASOFT EXPORTED DATA LOCATION
+QS_EXPORTED_DATA_LOCATION <- here("OPH_reservoir/OPH QSFT data")
+
+
+# path that I want to output results files to
+OUTPUT_FILE_PATH <-here::here("OPH_reservoir/OPH pipeline data/M42-5 and M96-9")
+
+#add in dilution factor, DSI cutoff for RPP30 assay 
+RPP30_dilution <- 20
+
+DSI_CUTOFF <- 60
+
+
+#EXPERIMENTS BEING ANALYZED HERE (match to LabNotebook file naming nomenclature) 
+#20210820_A2 A3 CF20 plus
+#20210517_A2 A3 CF13
+#20210518_A2 A3 CF14
+#20210524_A2 A3 CF15
+#20210831_A2 CF16 plus
+#20210901_A2 CF17 CF18
+#20210907_A3 CF16 thru 19 plus A2 from 0831 and 0901
+#20210913_M42 redos CF20 plus
+
+
+
+#### 3) READING IN EXPERIMENTAL DATA AND PULL LIST META DATA ####
+
+
+# merging meta data with well data
+#result in df containing 3 rows x No.samples obs. x 69 variables
+#insert rbind function for analysis of multiple experiments 
+#this often throws an error with the plate layout read-in. 
+here()
+
+well_dat_and_meta <- rbind(
+  file_paths_to_meta_wells("20210820_A2 A3 CF20"),
+  file_paths_to_meta_wells("20210517_A2 A3 CF13"),
+  file_paths_to_meta_wells("20210518_A2 A3 CF14"),
+  file_paths_to_meta_wells("20210524_A2 A3 CF15"),
+  file_paths_to_meta_wells("20210831_A2 CF16 plus"),
+  file_paths_to_meta_wells("20210901_A2 CF17 CF18"),
+  file_paths_to_meta_wells("20210907_A3 CF16 thru 19 plus A2 from 0831 and 0901"), 
+  file_paths_to_meta_wells("20210913_M42 redos CF20 plus")
+) 
+
+# well_dat_and_meta df= 1559 x 69
+
+# merging cluster data
+#if this throws an error, run the function in "helper functions" and it should be able to read 'well_dat_and_meta' properly
+
+cluster_dat_and_meta <- rbind(
+  file_paths_to_meta_clusters("20210820_A2 A3 CF20"),
+  file_paths_to_meta_clusters("20210517_A2 A3 CF13"),
+  file_paths_to_meta_clusters("20210518_A2 A3 CF14"),
+  file_paths_to_meta_clusters("20210524_A2 A3 CF15"),
+  file_paths_to_meta_clusters("20210831_A2 CF16 plus"),
+  file_paths_to_meta_clusters("20210901_A2 CF17 CF18"),
+  file_paths_to_meta_clusters("20210907_A3 CF16 thru 19 plus A2 from 0831 and 0901"),
+  file_paths_to_meta_clusters("20210913_M42 redos CF20 plus")
+)
+#cluster_dat_and_meta df= 4216 x 13
+
+check_complete_cases(cluster_dat_and_meta)
+
+#view wells for each sample
+#view_samples_and_rows(well_dat_and_meta)
+
+#checking number of replicates for assay 2 for all samples --> WILL STOP SCRIPT so you can check all OPH samples have at LEAST 3 reps to start 
+
+all_HIVassay_rep_count <- well_dat_and_meta %>%
+  count_reps(., "Assay2") %>%
+  mutate(Assay= "Assay2")
+
+
+all_RPP30_rep_count <- well_dat_and_meta %>%
+  count_reps(., "RPP30") %>%
+  mutate(Assay= "RPP30")
+
+#### 4) List of samples measured (no need to run all the time) ####
+
+#samples_measured <-well_dat_and_meta %>%
+#select(SampleID) %>%
+#unique() %>%
+#filter(SampleID != "H2O neg control")
+
+#### 5) Below droplet threshold flag ####
+
+FLAG_below_droplet_threshold <-well_dat_and_meta %>%
+  filter(`Accepted Droplets` < DROPLET_THRESHOLD) %>%
+  select(Well, SampleID, Assay, `Accepted Droplets`, Run)%>% 
+  mutate(below_droplet = "1") %>%
+  unique()
+#54 x 6 
+
+#use this to flag RPP30 samples below drop threshold--> combine with df later to show ONLY samples that havent been redone 
+RPP30_to_add <- well_dat_and_meta %>%
+  filter(`Accepted Droplets` < DROPLET_THRESHOLD) %>%
+  select(Well, SampleID, Assay, `Accepted Droplets`, Run) %>%
+  filter(Assay == "RPP30") %>%
+  group_by(SampleID)%>%
+  unique() %>%
+  merge(., all_RPP30_rep_count, by= "SampleID") %>%
+  filter(reps <2)
+#1 x 7 
+
+#summing failed reps for each sample (some had more than 1 fail)
+below_droplet<- FLAG_below_droplet_threshold %>%
+  group_by(SampleID, Assay) %>%
+  summarise(n = n()) %>%
+  rename(below_droplet = "n") 
+#34 x 3
+
+#### 6) RPP30 for cell counts ####
+
+#filter for RPP30 assay only 
+RPP30_deltaD <- choose_assay_get_well_total(cluster_dat_with_meta  = cluster_dat_and_meta,
+                                            assay_of_interest = "RPP30") %>%
+  filter(Assay != "Assay2")
+
+
+#TESTS--> WILL STOP SCRIPT
+
+check_complete_cases(RPP30_deltaD)
+
+
+#ADD CLUSTER NAMES TO REFERENCE DATA
+
+RPP30_deltaD <- triplex_add_cluster_names(RPP30_deltaD, target_1 = RPP30_deltaD_TARGET1,
+                                          target_2 = RPP30_deltaD_TARGET2,
+                                          target_3 = RPP30_deltaD_TARGET3)
+
+
+
+#divides all RPP30 cluster data by RPP30 target 
+ref_target_1 <- get_single_target_counts(assay_cluster_data = RPP30_deltaD,
+                                         target_of_interest = `Target 1`,
+                                         target_name = RPP30_deltaD_TARGET1) 
+
+
+ref_target_2 <- get_single_target_counts(assay_cluster_data = RPP30_deltaD,
+                                         target_of_interest = `Target 2`,
+                                         target_name = RPP30_deltaD_TARGET2)
+
+
+ref_target_3 <- get_single_target_counts(assay_cluster_data = RPP30_deltaD,
+                                         target_of_interest = `Target 3`,
+                                         target_name = RPP30_deltaD_TARGET3)
+
+
+
+# COMPARE DETECTION OF THE TWO RPP30 ASSAYS
+#we only use RPP30 early target to calculate cell numbers, so we're just checking RPP30 early and late correlate well enough to do this. 
+
+rpp30_detection <- bind_rows(ref_target_2, ref_target_3) %>%
+  group_by(SampleID) %>%
+  summarise(sd = sd(merged_count),
+            mean = mean(merged_count),
+            percent_cv = 100 * (sd/mean))
+
+#flagging RPP30 samples where early and late do NOT correlate closely (CV <10)
+rpp30_detection <- rpp30_detection %>%
+  filter(percent_cv >10) 
+
+
+#merged to show total merged droplets per replicate
+total_ref_assay_merged_droplets <- get_total_in_merged_well(assay_cluster_data = RPP30_deltaD)
+
+
+#Combine the two targets,calculate PBMC and T cells concentration (DeltaD)
+
+merged_ref_targets <- ref_target_1 %>%
+  rbind(., ref_target_2) %>%
+  
+  #merge in the data about total merged droplets
+  merge(., total_ref_assay_merged_droplets, by = "SampleID")%>%  
+  filter(SampleID != "H2O neg control") %>% #removing neg controls--> THIS NEEDS TO BE CUSTOMIZED FOR EVERY RUN if you change names
+  
+  #calculate concentration of RPP30 target
+  mutate(`Copies per uL` = get_concentration(
+    negative_droplets = total_merged_droplets - merged_count,
+    total_droplets = total_merged_droplets))  
+
+
+
+merged_ref_targets <- merged_ref_targets %>%
+  ungroup() %>%
+  select(SampleID, Target, `Copies per uL`)%>%
+  spread(key = Target, value = `Copies per uL`)%>%
+  rename(cells_per_uL = RPP30_early)%>% #I think this may be the place to factor in dilution and correct for RPP30 diploidy 
+  mutate(cells_per_uL= (cells_per_uL/REF_GENES_PER_GENOME)*as.numeric(RPP30_dilution)) %>% #I added this but MAYBE its completely unnecessary and I can remove it later....
+  mutate(T_cells_per_uL = cells_per_uL - deltaD)%>%
+  select(-deltaD)
+
+# Check: All values in the concentration columns should be positive!! <-- WILL STOP SCRIPT
+# If not it is possible that there were higher counts for non-T cells that for total cells.
+
+#being stopped by controls--> ignore 
+stopifnot(merged_ref_targets >0)
+
+
+check_complete_cases(merged_ref_targets)
+
+#### 7) CALCULATE DNA SHEARING INDEX (DSI) using RPP30 ####
+
+DSI_percent_RPP30_deltaD <-  RPP30_deltaD %>%
+  group_by(Assay,Dilution, SampleID, Cluster)%>%
+  filter(SampleID != "H2O neg control")%>%
+  summarise(merged_count = sum (Count)) %>%  #adding up the counts across reps
+  
+  # deltaD alone and negative cluster should not be included since it doesn't make sense to calculate out of total RPP30 since these clusters dont contain RPP30!!
+  filter(Cluster != "deltaD" & Cluster != "Negative droplet")%>%
+  spread(key = Cluster, value = merged_count)%>%
+  ungroup() %>%
+  
+  #calculate the total positive droplets by adding up all the columns the contain the string "RPP30" (i.e. exclude the id cols) 
+  mutate(total_RPP30_positive_droplets = rowSums(select(., contains("RPP30"))),
+         RPP30_early_single  = RPP30_early + `deltaD RPP30_early`,
+         RPP30_late_single = RPP30_late + `deltaD RPP30_late`,
+         RPP30_double_positive = `RPP30_early RPP30_late` + `deltaD RPP30_early RPP30_late`,
+         
+         #get avg of singles, i.e. the orig # of templates
+         avg_single = (RPP30_early_single + RPP30_late_single)/2 ,
+         
+         #calculate DSI
+         DSI = avg_single/(avg_single + RPP30_double_positive),
+         percent_double_RPP30 = 100 * RPP30_double_positive/total_RPP30_positive_droplets,
+         
+         #this is how Noah calcuates % intact, this is what he usually looks at to check quality
+         percent_intact = 100 * (1-(avg_single/(avg_single + RPP30_double_positive)))) %>%
+  
+  select(SampleID, DSI, percent_double_RPP30, percent_intact)
+
+
+FLAG_shearing<- DSI_percent_RPP30_deltaD %>%
+  filter(percent_intact < DSI_CUTOFF) %>%
+  mutate (high_shearing = "1") %>%
+  select('SampleID','percent_intact','high_shearing' )
+
+DSI_percent_RPP30_deltaD <- DSI_percent_RPP30_deltaD %>%
+  merge(., FLAG_shearing, by= c("SampleID", "percent_intact"), all= T) %>%
+  replace(is.na(.), 0) %>%
+  merge(., merged_ref_targets, by="SampleID", all= T)
+
+#histogram of shearing 
+ggplot(DSI_percent_RPP30_deltaD, aes(x=percent_intact)) + 
+  geom_histogram(color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(percent_intact)),
+             color="blue", linetype="dashed", size=1)+
+  geom_vline(aes(xintercept= DSI_CUTOFF),
+             color="red", linetype="dashed", size=1)
+
+
+#### 8) Assay 2: replicate fold change analysis (TP only) ####
+
+#replicate analysis can only be done on samples with 3 or more reps, so any samples with missing 
+#reps will be filtered out before analysis and FLAGGED for having either NO droplets or too few droplets
+
+#### THIS WILL REQUIRE US TO FLAG; REPORT FC>10; THEN RE_RUN DATA WITH THOSE SAMPLES EXCLUDED 
+assay2rep <- choose_assay_get_well_total_rep(cluster_dat_with_meta  = cluster_dat_and_meta,
+                                             assay_of_interest = "Assay2") %>% 
+  filter(Assay != "RPP30")
+
+
+assay2rep <-triplex_add_cluster_names(assay2rep, target_1 = ASSAY2_TARGET_1,
+                                      target_2 = ASSAY2_TARGET_2,
+                                      target_3 = ASSAY2_TARGET_3)
+
+#2752 x 15 = 1,150 A2 wells     
+
+#counting how many reps are above droplet threshold and can be used for FC analysis
+HIVassay_rep_count <- well_dat_and_meta %>%
+  filter(`Accepted Droplets` > DROPLET_THRESHOLD) %>%
+  count_reps(., "Assay2")
+
+assay2rep <- assay2rep %>%
+  merge(., HIVassay_rep_count, by= "SampleID") 
+
+#df containing A2 cluster data for samples with at least 3 reps for fold change analysis   
+three_reps <- assay2rep %>%
+  filter(reps >=3) %>%
+  
+  #removing controls cause I dont care about them for this 
+  filter(SampleID != "H2O neg control",
+         SampleID != "plasmid control mix",
+         SampleID != "triple pos control ",
+         SampleID != "triple pos control",
+         SampleID != "Triple pos con plasmid",
+         SampleID != "plasmid mix control",
+         SampleID != "Jlat/PBMC mix control",
+         SampleID != "H20 neg control",
+         SampleID != "5/19 Jlat control",
+         SampleID != "5/19 Jlat control ",
+         SampleID != "5/12 Jlat/PBMC mix 2",
+         SampleID != "5/12 Jlat/PBMC mix 1",
+         SampleID != "H20 neg control ")
+
+
+### changing "count" = 0 to 0.5 for FC analysis that includes samples with no TP hits 
+#separate out TP droplet= 0 samples,replace 0 with 0.5 in a new column  
+
+three_reps<- three_reps %>%
+  mutate(TP_hits = case_when(
+    `Target 1` == 1 & `Target 2` == 1 & `Target 3` == 1 ~ Count*1))
+
+three_reps [, 17][three_reps[, 17] == 0] <- 0.5   
+
+
+
+
+## CALCULATE TOTAL SUMMED DROPLETS IN MERGED WELLS (SUM DROPLETS ACROSS REPS)
+
+total_HIV_assay_merged_droplets_rep <- get_total_in_separate_well(assay_cluster_data = assay2rep)
+
+
+### CALCULATE COPIES/UL IN UNMERGED WELLS for TP ONLY 
+three_reps <- three_reps %>%
+  merge(., total_HIV_assay_merged_droplets_rep, by = c("SampleID", "Assay", "Well")) %>% 
+  
+  # calculate droplets NOT in the cluster
+  mutate(Neg_for_cluster = total_droplets - TP_hits) %>%
+  
+  mutate(negative_droplets = Neg_for_cluster) %>%
+  
+  # remember that in R, if you want natural log (ln), use `log`
+  mutate(`Copies per uL in cluster` = get_concentration(negative_droplets, total_droplets)) %>%
+  
+  # This process calculates a "concentration" for the "Negative droplets" cluster, but this is meaningless because this cluster was not positive for anything. So I'll set the value for "copies per uL in cluster" to zero for the rows corresponding to the Negative droplets cluster.
+  mutate(`Copies per uL in cluster` = ifelse(Cluster == "Negative droplet", 0, `Copies per uL in cluster`))
+
+
+
+#calculating fold change for TP copies/uL reaction vol.    
+min_max_reps <- three_reps %>%
+  filter(Cluster == "polEarly gag env") %>%
+  group_by(SampleID) %>%
+  rename("TP copies per uL reaction"= `Copies per uL in cluster`) %>%
+  mutate(fold_change = max(`TP copies per uL reaction`)/min(`TP copies per uL reaction`),
+         high= max(`TP copies per uL reaction`),
+         low= min(`TP copies per uL reaction`), 
+         median(`TP copies per uL reaction`))  
+
+fc3to10 <- min_max_reps %>%
+  filter(fold_change>3) %>%
+  filter(fold_change <10) %>%
+  mutate(Foldchange= "FC >3; additional rep") 
+
+fc10 <- min_max_reps %>%
+  filter(fold_change>10) %>%
+  mutate(Foldchange= "FC >10; redo rep") 
+
+
+min_max_reps_10 <- min_max_reps %>%
+  filter(fold_change>10) %>%
+  group_by(SampleID) %>%
+  mutate(highFC = max(`TP copies per uL reaction`)/median(`TP copies per uL reaction`),
+         lowFC= median(`TP copies per uL reaction`)/min(`TP copies per uL reaction`))
+
+fc10_to_redo <- fc10 %>%
+  filter(reps <= 3)
+
+
+#determine which replicate is creating the large FC and remove them   
+todrop_high <- min_max_reps_10 %>%
+  filter(highFC > lowFC) %>%
+  filter(high == `TP copies per uL reaction`)
+
+todrop_low <- min_max_reps_10 %>%
+  filter(highFC < lowFC) %>%
+  filter(low == `TP copies per uL reaction`)
+
+#a list of all the replicates causing large FC for each sample with FC>10. 
+#in "drop" column a one is added to flag rep 
+reps_toberemoved <- todrop_high %>%
+  rbind(., todrop_low) %>%
+  mutate(drop=1) %>%
+  select(SampleID, 
+         Well, 
+         Run,
+         drop) 
+
+
+
+
+#recombine the data without FC>10 samples back into df showing FC for all samples with the one off one removed--> SHOULD BE WAY LOWER 
+#signal reps to keep by putting a "0" in the "drop" column added during merge 
+#when I re-run the samples with the fill ins I will START by using this file to filter out the ones I've already redone:)
+assay2_cleaned <- assay2rep %>%
+  merge(., reps_toberemoved, by= c("SampleID", "Well", "Run"), all=T) %>%
+  dplyr::mutate(drop = replace_na(drop, 0))
+
+#remove the bad reps using the "drop" column flag 
+assay2_cleaned <- assay2_cleaned %>%
+  filter(drop == "0") %>%
+  select(-drop)
+
+A2reps_to_fill_in <- assay2_cleaned %>%
+  count_cluster_reps(., "Assay2") %>%
+  filter(reps<3)
+
+#go back and redo fold change analysis for samples after cleaning 
+
+
+### changing "count" = 0 to 0.5 for FC analysis that includes samples with no TP hits 
+#separate out TP droplet= 0 samples,replace 0 with 0.5 
+
+fold_change<- assay2_cleaned %>%
+  filter(Cluster == "polEarly gag env")
+
+fold_change [, 8][fold_change[, 8] == 0] <- 0.5   
+
+
+total_HIV_assay_merged_droplets_rep <- get_total_in_separate_well(assay_cluster_data = assay2_cleaned)
+
+
+### CALCULATE COPIES/UL IN UNMERGED WELLS for TP ONLY 
+fold_change <- fold_change %>%
+  merge(., total_HIV_assay_merged_droplets_rep, by = c("SampleID", "Assay", "Well")) %>% 
+  
+  #just a check for the weird ones...
+  mutate(total_droplets = `Total droplets in well`) %>%
+  
+  # calculate droplets NOT in the cluster
+  mutate(Neg_for_cluster = total_droplets - Count) %>%
+  
+  mutate(negative_droplets = Neg_for_cluster) %>%
+  
+  # remember that in R, if you want natural log (ln), use `log`
+  mutate(`Copies per uL in cluster` = get_concentration(negative_droplets, total_droplets)) %>%
+  
+  # This process calculates a "concentration" for the "Negative droplets" cluster, but this is meaningless because this cluster was not positive for anything. So I'll set the value for "copies per uL in cluster" to zero for the rows corresponding to the Negative droplets cluster.
+  mutate(`Copies per uL in cluster` = ifelse(Cluster == "Negative droplet", 0, `Copies per uL in cluster`))
+
+
+
+fold_change_plot <- fold_change%>%
+  filter(Cluster == "polEarly gag env") %>%
+  group_by(SampleID) %>%
+  rename("TP copies per uL reaction"= `Copies per uL in cluster`) %>%
+  mutate(fold_change = max(`TP copies per uL reaction`)/min(`TP copies per uL reaction`),
+         min_copies_per_uL= min(`TP copies per uL reaction`),
+         max_copies_per_uL = max(`TP copies per uL reaction`)) %>%
+  
+  #just removing him since his copy number is v high and skews plot scale 
+  dplyr::filter(SampleID != "triple pos control ", 
+                SampleID != "Jlat control", 
+                SampleID != "Triple pos con plasmid", 
+                SampleID != "triple pos plasmid",
+                SampleID != "plasmid mix",
+                SampleID != "triple pos control mix",
+                SampleID != "Jlat PBMC control mix")
+
+#NOTE: some of the FC might be >10 for samples with 2 reps. Reps are only removed for causing high FC when @least 3 have been completed and considered 
+
+#plotting reps for copy count correlation THIS NEEDS TO HAPPEN USING A DIFFERENT DATA SET; def is more useful when done with normalized data.... 
+
+#plotting raw data --> Rsquared= 0.99
+#ggsave(paste0(OUTPUT_FILE_PATH,"rep correlation between highest/lowest copy count per million PBMCs.png"))
+
+ggplotRegression(lm(min_copies_per_uL 
+                    ~max_copies_per_uL, data = fold_change_plot))
+
+
+
+
+
+#### 10) ASSAY 2: merging droplets and excluding wells below droplet threshold ####
+
+#assay 2 from cluster data, target names are assigned in script (in well data they are assigned during gating)
+
+#after merge analysis we have a cluster data df that does NOT include some replicates == "assay2_cleaned"
+
+
+
+# CALCULATE TOTAL SUMMED DROPLETS IN MERGED WELLS (SUM DROPLETS ACROSS REPS)
+total_HIV_assay_merged_droplets <- get_total_in_merged_well(assay_cluster_data = assay2_cleaned)
+
+
+
+# USE FUNCTION TO MERGE DROPLETS IN REPLICATE WELLS AND CALCULATE COPIES/UL
+
+assay2 <- merge_well_calc_conc(HIV_assay_df = assay2_cleaned,
+                               total_merged_droplets_df = total_HIV_assay_merged_droplets)
+
+# CALCULATE ANY HIV COPIES (sums conc of all HIV targets to show ALL and ANY HIV in sample)
+
+# counting up concentrations from positive droplets
+
+total_HIV_conc <- get_total_HIV_conc(concentration_df = assay2)
+
+# USE FUNCTION TO CALCULATE PERCENT OF EACH CLUSTER OUT OF TOTAL HIV BY MERGING WITH TOTAL HIV DATA
+assay2 <- get_percent(concentration_df = assay2, total_HIV_conc_df = total_HIV_conc )
+
+#### 11) Normalizing HIV data to 1E6 cells ####
+
+#### 15) Total cells interrogated report ####   
+total_cells_interrogated<- assay2_cleaned %>%
+  select(SampleID, reps) %>%
+  merge(., DSI_percent_RPP30_deltaD, by= "SampleID") %>% #cells per uL reports cells per uL of REACTION (20 uL volume)
+  mutate(cells_per_uL_template = cells_per_uL * 5) %>% #20 uL rxn volume / 4 uL template per rxn
+  mutate(T_cells_per_uL_template = T_cells_per_uL *5) %>%
+  mutate(total_cell_interrogated = cells_per_uL_template * reps * 4) %>%
+  mutate(total_T_cells_interrogated = T_cells_per_uL_template * reps* 4) %>%
+  unique()
+
+test<- total_cells_interrogated %>%
+  merge(., merged_ref_targets, by= "SampleID", all= TRUE)
+
+#now we just gotta add those two columns into our final exported data  
+
+mean(total_cells_interrogated$total_cell_interrogated, trim = 0)
+#avg number of cells being interrogated per well is 300732
+
+median(total_cells_interrogated$total_cell_interrogated, trim = 0)
+#median number of cells being interrogated is 167125
+
+
+# CORRECT NORMALIZED TRIPLE POSITIVE COPIES USING DSI
+
+normalized_HIV_assay_clusters<- assay2 %>%
+  merge(., total_cells_interrogated, by = "SampleID", all=T)%>%
+  mutate(cluster_copies_per_1E6_cells = NORMALIZATION_FACTOR* (`Copies per uL in cluster`/cells_per_uL))%>%
+  mutate(cluster_copies_per_1E6_T_cells = NORMALIZATION_FACTOR* (`Copies per uL in cluster`/T_cells_per_uL))%>%
+  mutate(total_HIV_copies_per_1E6_cells = NORMALIZATION_FACTOR*(`Total HIV copies per uL in merged well`/cells_per_uL))%>%
+  mutate(total_HIV_copies_per_1E6_T_cells = NORMALIZATION_FACTOR*(`Total HIV copies per uL in merged well`/T_cells_per_uL))%>%
+  rename(`Merged droplets in cluster` = merged_count)%>% # rename some things so the colnames make more sense to users
+  rename(`Total droplets in merged wells` = total_merged_droplets)%>%
+  
+  #mutate_at(vars(`Merged droplets in cluster`:`Cluster copies per 1E6 T cells`),round, digits = 2 ) %>%
+  note_no_pos_samples(., remove_zeros = FALSE) %>%
+  
+  
+  ### combine with DSI data here and correct the normalized triple positive copies
+  
+  mutate(DSI_corrected_per_1E6_cells = ifelse(Cluster == "polEarly gag env" & percent_intact > DSI_CUTOFF, 
+                                              cluster_copies_per_1E6_cells/ (1-DSI),
+                                              NA)) %>%
+  mutate(DSI_corrected_per_1E6_T_cells = ifelse(Cluster == "polEarly gag env" & percent_intact > DSI_CUTOFF ,
+                                                cluster_copies_per_1E6_T_cells/(1-DSI),
+                                                NA)) %>%
+  mutate(triple_pos_neg= ifelse(Cluster== "polEarly gag env" & `Merged droplets in cluster` == 0, 
+                                "1", "0"
+  )) %>%
+  mutate(interrogated_1e5_cells= ifelse(Cluster== "polEarly gag env" & `Merged droplets in cluster` == 0 & total_cell_interrogated > 1E5,
+                                        "1", "0"
+  )) %>%
+  
+  select(-cells_per_uL, -T_cells_per_uL) %>%
+  unique()
+
+
+
+######### MANUALLY ASSIGN THE TARGET NAMES BASED ON THE DYENAME(S) EXPORTED IN THE WELL DATA 
+
+#### Correct target name check in Well_dat. 
+
+well_dat_checked <- well_dat_and_meta %>%
+  mutate(Target = case_when(
+    Assay == "Assay2" & `DyeName(s)`== "FAM Lo" ~"polEarly",
+    Assay == "Assay2" & `DyeName(s)`== "HEX Hi" ~ "gag",
+    Assay == "Assay2" & `DyeName(s)`== "HEX Lo" ~ "env",
+    Assay == "Assay1" & `DyeName(s)`== "FAM Hi" ~ "tat",
+    Assay == "Assay1" & `DyeName(s)`== "FAM Lo" ~ "polLate",
+    Assay == "Assay1" & `DyeName(s)`== "HEX Lo" ~ "env",
+    Assay == "RPP30" & `DyeName(s)` == "HEX Lo" ~ "RPP30_late",
+    Assay == "RPP30" & `DyeName(s)` == "FAM Hi" ~ "RPP30_early",
+    Assay == "RPP30" & `DyeName(s)` == "FAM Lo" ~ "deltaD"
+  ))
+
+
+#### 12) Assay 2: single target data ####
+
+#single target data uses well_dat_checked, but there are reps from FC analysis that need to be excluded prior to downstream analysis
+
+#a list of all the replicates causing large FC for each sample with FC>10. 
+#in "drop" column a "1" is added to flag rep for removal 
+well_reps_toberemoved <- todrop_high %>%
+  rbind(., todrop_low) %>%
+  mutate(drop=1) %>%
+  select(SampleID, 
+         Well, 
+         Run,
+         drop)
+
+#need to filter well_data_and_meta for A2 only since we only removed A2 reps 
+well_dat_and_meta<- well_dat_and_meta %>%
+  filter(Assay == "Assay2",
+         Assay != "RPP30") 
+
+
+
+#recombine the data without FC>10 samples back into df showing FC for all samples with the one off one removed--> SHOULD BE WAY LOWER 
+#signal reps to keep by putting a "0" in the "drop" column added during merge 
+well_reps_toberemoved <- well_dat_and_meta %>%
+  merge(., well_reps_toberemoved, by= c("SampleID", "Well", "Run"), all=T) %>%
+  dplyr::mutate(drop = replace_na(drop, 0))
+
+#remove the bad reps using the "drop" column flag 
+well_dat_and_meta_cleaned <- well_reps_toberemoved %>%
+  filter(drop == "0") %>%
+  select(-drop)
+
+
+## "SINGLE TARGETS" ARE THE INDIVIDUAL HIV TARGETS, REGARDLESS OF WHETHER THEY WERE PRESENT IN COMBINATION WITH ANOTHER CLUSTER. THIS IS WHAT YOU GET WHEN YOU EXPORT WELL DATA
+
+normalized_HIV_assay_single_targets <- well_dat_and_meta_cleaned %>% #change back to well_dat_checked when/ if dye issue is solved...
+  filter(Assay != "RPP30_deltaD", 
+         `Accepted Droplets` >= DROPLET_THRESHOLD) %>%
+  group_by(SampleID,Assay,Target)%>%
+  #now merge the wells...
+  summarise_at(c("Accepted Droplets", "Negatives"),sum)%>%
+  mutate(`Copies per uL` = get_concentration(negative_droplets = Negatives, total_droplets = `Accepted Droplets`)) %>%
+  
+  
+  # merge the REF data and the HIV data by PTID and SampleID so I have concentration values for HIV targets and Ref target side by side. Then I can calcualte a ratio and get a data frame that looks like what I get out of after combining the cluster data with the merged_ref_target
+  
+  
+  merge(.,merged_ref_targets, by = "SampleID")%>%
+  mutate(copies_per_1E6_cells = NORMALIZATION_FACTOR* (`Copies per uL`/cells_per_uL))%>%
+  mutate(copies_per_1E6_T_cells = NORMALIZATION_FACTOR* (`Copies per uL`/T_cells_per_uL))%>%
+  mutate(Target = paste("Any", Target))
+
+#### 13) Assay 2: Any HIV calculation ####
+## Here is a data frame where I calculate "Any HIV"
+
+normalized_total_HIV <- normalized_HIV_assay_clusters %>%
+  
+  
+  #selecting just SampleID, Assay and two columns that tell me about the Total HIV *in each merged well for that SampleID/Assay combination*
+  
+  select(SampleID,Assay,total_HIV_copies_per_1E6_cells,total_HIV_copies_per_1E6_T_cells)%>%
+  
+  mutate(Target ="Any HIV") %>%
+  
+  unique() %>% # doing unique() because without that I get one row for each cluster but I really only care about the total HIV, so I collapse down to the unique entries for each SampleID/Assay combination. If I didn't do that, I would have a bunch of rows with the same number in them and I only want that number once.
+  
+  rename(copies_per_1E6_cells =total_HIV_copies_per_1E6_cells ) %>%
+  rename(copies_per_1E6_T_cells =total_HIV_copies_per_1E6_T_cells)
+
+##TESTS
+check_complete_cases(normalized_total_HIV) #makes sense since we had samples fall out of RPP30
+
+
+normalized_single_triple_total  <- normalized_HIV_assay_clusters %>%
+  
+  #get just the triple positives from the normalized clusters
+  filter(Cluster == paste(ASSAY2_TARGET_1,ASSAY2_TARGET_2, ASSAY2_TARGET_3) | Cluster == paste(ASSAY1_TARGET_1, ASSAY1_TARGET_2, ASSAY1_TARGET_3))%>%
+  rename(Target = Cluster,
+         copies_per_1E6_cells = cluster_copies_per_1E6_cells,
+         copies_per_1E6_T_cells = cluster_copies_per_1E6_T_cells) %>%
+  mutate(Target = "triple positive") %>%
+  bind_rows(.,
+            normalized_HIV_assay_single_targets,
+            normalized_total_HIV)
+
+
+#### 14) Assay 2: Total HIV calculation using highest target conc. ####
+# this "other method" of calculating total HIV takes the target region with the highest copy count and uses that as a proxy for the amount of provirus in the sample 
+#(the method we usually report uses the sum of ALL HIV target copies)
+#"normalized_HIV_assay_single_targets" df has "any target" c/uL and c/1E6 cells data for any targets a2 and a3
+# we want to compare a2 targets for each sample, then use the highest "any target" value as our Total HIV value 
+
+total_HIV_method2 <- normalized_single_triple_total %>%
+  filter(Assay == "Assay2", Target != "triple positive", Target != "Any HIV") %>%
+  select("SampleID", 
+         "Assay", 
+         "Target", 
+         "cells_per_uL",
+         "T_cells_per_uL",
+         "copies_per_1E6_cells",
+         "copies_per_1E6_T_cells",
+         "Accepted Droplets",
+         "Negatives",
+         "Copies per uL")
+
+total_HIV_method2 <- total_HIV_method2 %>%
+  group_by(SampleID) %>% 
+  top_n(1,copies_per_1E6_T_cells) %>%
+  rename(total_HIV_copies_per_1E6_cells = "copies_per_1E6_cells", 
+         total_HIV_copies_per_1E6_T_cells = "copies_per_1E6_T_cells", 
+         total_HIV_copies_per_uL_well= "Copies per uL", 
+         Target_used_for_total_HIV = "Target")
+
+total_HIV_recalc_method2 <- normalized_single_triple_total %>%
+  filter(Assay == "Assay2") %>%
+  rename( ANY_HIV_copies_per_1E6_cells = "total_HIV_copies_per_1E6_cells",
+          ANY_HIV_copies_per_1E6_T_cells = "total_HIV_copies_per_1E6_T_cells") %>%
+  merge(., total_HIV_method2, by ="SampleID")
+
+
+
+
+#### 16) samples with 0 TP copies ####
+noTP_hits<- normalized_HIV_assay_clusters %>%
+  filter(DSI_corrected_per_1E6_cells == 0) %>%
+  select(SampleID,
+         Assay,
+         Cluster,
+         total_HIV_copies_per_1E6_cells,
+         DSI,
+         percent_intact,
+         reps, 
+         total_cell_interrogated, 
+         cells_per_uL_template) %>%
+  mutate(noTP_hits = "1") %>%
+  mutate(cells_int_1e5 = ifelse(total_cell_interrogated>1E5,"1","0"))
+
+FLAG_noTP_hits <- noTP_hits %>%
+  filter(reps >2) %>%
+  filter( total_cell_interrogated < 1E5) %>%
+  mutate(Flag = "fewer 100,000 cells interrogated") %>% 
+  mutate(additional_reps = ((1E5- total_cell_interrogated)/cells_per_uL_template)/4) %>%
+  select(SampleID,
+         total_cell_interrogated,
+         cells_per_uL_template,
+         additional_reps) 
+
+TPneg_to_add <- FLAG_noTP_hits %>%
+  filter(additional_reps<5) %>%
+  rename(TPneg_reps = additional_reps) %>%
+  select(SampleID, 
+         TPneg_reps) %>%
+  mutate(Assay = "Assay2") 
+
+
+
+
+
+#### 18) generating output files with all the info we want...####
+
+#we want a file that includes all HIV assay data and all RPP30 data for easy looking....
+
+data_summary <- normalized_single_triple_total %>%
+  filter(Target == "triple positive") %>% #rename columns to make it clear we're looking at TP data only
+  select(SampleID, 
+         Assay, 
+         `Merged droplets in cluster`,
+         `Total droplets in merged wells`,
+         total_HIV_copies_per_1E6_cells,
+         total_HIV_copies_per_1E6_T_cells,
+         copies_per_1E6_cells,
+         copies_per_1E6_T_cells,
+         DSI,
+         percent_intact,
+         DSI_corrected_per_1E6_cells,
+         DSI_corrected_per_1E6_T_cells) %>%
+  rename(triple_positive_copies_per_1E6_cells= "copies_per_1E6_cells",
+         triple_positive_copies_per_1E6_T_cells= "copies_per_1E6_T_cells",
+         ANY_HIV_copies_per_1E6_cells= "total_HIV_copies_per_1E6_cells",
+         ANY_HIV_copies_per_1E6_T_cells= "total_HIV_copies_per_1E6_T_cells") %>%
+  unique()
+
+write_out(data_summary, df_type = "data_summary")
+
+write_out(normalized_single_triple_total, df_type = "normalized_single_triple_total")
