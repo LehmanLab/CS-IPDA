@@ -2,9 +2,9 @@
 Analysis of total and intact HIV DNA quantified by CS-IPDA. 
 
 ### **Overview**
-This directory contains scripts and examples of data required for CS-IPDA analysis for intact and total HIV DNA as described in the manuscript "HIV reservoir quantification using cross-subtype multiplex ddPCR" by Cassidy et al.  
+This directory contains scripts and examples of data required for CS-IPDA analysis for intact and total HIV DNA as described in the manuscript "HIV reservoir quantification using cross-subtype multiplex ddPCR" by Cassidy et al (https://www.cell.com/iscience/fulltext/S2589-0042(21)01585-6).   
 
-The R CS-IPDA work-flow was developed to analyze HIV multiplex ddPCR and RPP30 cell reference multiplex ddPCR data simultaneously allowing for high-throughput data processing. The R triplex workflow and script was developed by Hladik lab and adapted by the Lehman lab for use with longitudinal HIV DNA decay and reservoir samples from Kenyan patient cohorts. 
+The R CS-IPDA work-flow was developed to analyze HIV multiplex ddPCR and RPP30 cell reference multiplex ddPCR data simultaneously allowing for high-throughput data processing. The R triplex workflow and script was developed and published by Claire Levy (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8517383/) and adapted by the Lehman group for use with longitudinal HIV DNA decay and reservoir samples from Kenyan patient cohorts. 
 
 The general workflow for CS-IPDA data collection and analysis is as follows: 
 # <img width="371" alt="Screen Shot 2021-12-06 at 5 29 18 PM" src="https://user-images.githubusercontent.com/94940751/144949214-27444e56-d220-429d-9077-8fdc86e6d7fe.png">
