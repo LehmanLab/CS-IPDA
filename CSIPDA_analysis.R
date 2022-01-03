@@ -1,10 +1,10 @@
-### OPH multiplex analysis pipeline 
+### CSIPDA HIV multiplex analysis  
 ### SCRIPT PURPOSE: analyzing and merging CSIPDA HIV DNA df with RPP30 assay df for normalized total and intact HIV data
 
 #### 1) PREPPING TO RUN ####
 
 library(here)
-# dicatates that directory starts at folder containing CSIPA analysis script and CSIDPA_helper_functions
+# dictates that directory starts at folder containing CSIPA analysis script and CSIPDA_helper_functions
 here() #check that directory is set...
 
 # read in helper functions 
@@ -28,8 +28,7 @@ OUTPUT_FILE_PATH <- here("Data")
 
 
 #### 3) READING IN EXPERIMENTAL DATA AND META DATA ####
-# use rbind function for analysis of multiple experiments 
-
+# use rbind function for analysis of multiple experiments
 # merging meta data from plate layout with well data from Quantasoft 
 # note that well data has three rows per sample for multiplex with three dyes 
 # this can show an error with the plate layout read-in if there are any spaces following SAMPLEIDs or different number of wells on plate layout/well/cluster data. 
@@ -144,6 +143,7 @@ merged_ref_targets <- merged_ref_targets %>%
   rename(cells_per_uL = RPP30_early)%>% 
   #correct cell quant data for diploidy, dilution. 
   mutate(cells_per_uL= (cells_per_uL/REF_GENES_PER_GENOME)*as.numeric(RPP30_dilution)) %>% 
+  mutate(T_cells_per_uL = cells_per_uL - deltaD)%>%
   select(-deltaD)
 
 # Check: All values in the concentration columns should be positive!! <-- WILL STOP SCRIPT
