@@ -14,14 +14,14 @@ Analysis of CS-IPDA and RPP30 multiplex data is completed using the scripts `CSI
 
 
 Scripts for analysis of QuantaSoft output in R to get: 
-##### •	Triple positives per 1E6 T cells/ PBMCs
-##### •	Cluster copies per 1E6 T cells/ PBMCs
-##### •	Any HIV per 1E6 T cells
-##### •	Each target (regardless of combination with others) per 1E6 T cells
-##### •	Samples with no intact copies of HIV DNA per 1E6 T cells 
+##### •	Potentially “intact” HIV DNA copies per 1x10^6  cells or T cells
+##### •	HIV DNA single and dual target copies per 1x10^6  cells or T cells
+##### •	Any HIV copies (defective or intact) detected per 1x10^6  cells or T cells
+##### •	Samples with no intact copies of HIV DNA per 1x10^6  cells or T cells 
 ##### •	Samples with wells below threshold droplet count
-##### •	Total number of cells interrogated for each patient sample
-##### •	DSI and percent “intact” for all samples
+##### •	Total number of cells or T cells interrogated for each sample
+##### •	Concentration of cells or T cells per volume of gDNA for each sample
+##### •	DNA shearing index (DSI) and percent of unsheared DNA for all gDNA samples
 
 
 
