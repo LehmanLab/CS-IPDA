@@ -26,7 +26,9 @@ Scripts for analysis of QuantaSoft output in R to get:
 CS-IPDA and RPP30 cell reference assays can be completed in the same experiment, so the Quantasoft data and meta data files may include both assays in the same file. The experimental `ACH2 CSIPDA` and `ACH2 RPP30` data provided here is an example of CS-IPDA and RPP30 assay data collected for the same samples as two separate experiments.  
 
 
-Note that we recently found an error in our code for normalizing per million T cells and on Sept 22, 2023, we updated the CSIPDA_analysis R script file, now called CSIPDA_analysis_v1.2.R  Please contact dlehman@fredhutch.org with any questions.
+Note that we recently found an error in our code for normalizing per million T cells and on Sept 22, 2023, we updated the CSIPDA_analysis R script file, now called CSIPDA_analysis_v1.2.R.  
+
+Please contact dlehman@fredhutch.org with any questions.
 
 
 
