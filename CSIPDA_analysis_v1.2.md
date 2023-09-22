@@ -1,5 +1,6 @@
 CS-IPDA HIV multiplex analysis (v1.2)
 ================
+Updated: August 2023
 
 Purpose: Analyzing and merging CSIPDA HIV DNA data with RPP30 assay data
 for normalized total and intact HIV data reports.
